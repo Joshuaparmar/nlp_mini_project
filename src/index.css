@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Typographic System */
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+    /* Light Theme: Ivory + Ink + Cobalt */
+    --bg-page: #fbf9f5;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f4f0e8;
+    --bg-muted: #ede7dc;
+    --border-subtle: #e3ddd4;
+    --border-strong: #cfc6b8;
+
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #6b7280;
+
+    --brand-primary: #1d4ed8;
+    --brand-primary-hover: #1e40af;
+    --brand-primary-subtle: #eff6ff;
+    --brand-primary-text: #1d4ed8;
+
+    /* Verdict Tokens (Light) */
+    --verdict-supported-bg: #ecfdf5;
+    --verdict-supported-text: #065f46;
+    --verdict-supported-border: #a7f3d0;
+
+    --verdict-refuted-bg: #fff1f2;
+    --verdict-refuted-text: #9f1239;
+    --verdict-refuted-border: #fecdd3;
+
+    --verdict-insufficient-bg: #fffbeb;
+    --verdict-insufficient-text: #92400e;
+    --verdict-insufficient-border: #fde68a;
+
+    --verdict-ambiguous-bg: #faf5ff;
+    --verdict-ambiguous-text: #6b21a8;
+    --verdict-ambiguous-border: #e9d5ff;
+
+    --card-shadow: 0 1px 3px 0 rgba(18, 24, 38, 0.05), 0 1px 2px -1px rgba(18, 24, 38, 0.05);
+    --card-shadow-hover: 0 4px 6px -1px rgba(18, 24, 38, 0.07), 0 2px 4px -2px rgba(18, 24, 38, 0.07);
+    --scrollbar-thumb: #d6cfc4;
+    --scrollbar-hover: #b5aba0;
+  }
+
+  /* Dark Theme: Graphite + Cyan + Mint */
+  .dark, [data-theme="dark"] {
+    --bg-page: #0b0f17;
+    --bg-surface: #131924;
+    --bg-subtle: #1a2230;
+    --bg-muted: #232c3e;
+    --border-subtle: #222b3b;
+    --border-strong: #313d52;
+
+    --text-primary: #f3f4f6;
+    --text-secondary: #9ca3af;
+    --text-muted: #64748b;
+
+    --brand-primary: #0284c7;
+    --brand-primary-hover: #0369a1;
+    --brand-primary-subtle: #082f49;
+    --brand-primary-text: #38bdf8;
+
+    /* Verdict Tokens (Dark) */
+    --verdict-supported-bg: #064e3b;
+    --verdict-supported-text: #6ee7b7;
+    --verdict-supported-border: #047857;
+
+    --verdict-refuted-bg: #4c0519;
+    --verdict-refuted-text: #fda4af;
+    --verdict-refuted-border: #881337;
+
+    --verdict-insufficient-bg: #451a03;
+    --verdict-insufficient-text: #fcd34d;
+    --verdict-insufficient-border: #78350f;
+
+    --verdict-ambiguous-bg: #3b0764;
+    --verdict-ambiguous-text: #d8b4fe;
+    --verdict-ambiguous-border: #581c87;
+
+    --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.35);
+    --card-shadow-hover: 0 4px 12px 0 rgba(0, 0, 0, 0.45);
+    --scrollbar-thumb: #2d3748;
+    --scrollbar-hover: #4a5568;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--bg-page);
+    color: var(--text-primary);
+    min-height: 100vh;
+    background-image: 
+      radial-gradient(at 100% 0%, rgba(37, 99, 235, 0.04) 0px, transparent 50%),
+      radial-gradient(at 0% 100%, rgba(99, 102, 241, 0.03) 0px, transparent 50%);
+    background-attachment: fixed;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+.font-serif {
+  font-family: var(--font-serif);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Custom Editorial Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+}
+
+/* Theme-Aware Surfaces */
+.surface-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--card-shadow);
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.surface-card-hover {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.surface-card-hover:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--card-shadow-hover);
+  transform: translateY(-1px);
+}
+
+/* Focus and active claim outline */
+mark:focus {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.surface-subtle {
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Accessible focus ring utility */
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}

@@ -1,7 +1,10 @@
+
 import logging
 import re
 from dataclasses import dataclass
 
+import numpy as np
+from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -9,6 +12,30 @@ from backend.pdf_parser import PDFPage
 
 
 logger = logging.getLogger(__name__)
+
+_EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+_SEMANTIC_WEIGHT = 0.65
+_LEXICAL_WEIGHT = 0.35
+
+# Load the model only once per Python process.
+_embedding_model = None
+
+
+def _get_embedding_model() -> SentenceTransformer:
+    global _embedding_model
+
+    if _embedding_model is None:
+        logger.info("Loading semantic embedding model: %s", _EMBEDDING_MODEL_NAME)
+        _embedding_model = SentenceTransformer(_EMBEDDING_MODEL_NAME)
+
+    return _embedding_model
+
+
+def _normalize_pdf_text(text: str) -> str:
+    """Normalize whitespace and repair words split across PDF lines."""
+    text = re.sub(r"(?<=\w)-\s*\n\s*(?=\w)", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 @dataclass(frozen=True)
@@ -26,15 +53,7 @@ def split_into_passages(
     max_words: int = 180,
     overlap_words: int = 35,
 ) -> list[EvidencePassage]:
-    """
-    Split PDF pages into sentence-level evidence passages.
-
-    Each normal sentence becomes its own passage. Sentences that exceed
-    max_words are split into overlapping word windows.
-
-    Original source filenames and page numbers are preserved.
-    Retrieval scores are assigned later.
-    """
+    """Split PDF text into sentence-level, source-preserving passages."""
     if max_words < 1:
         raise ValueError("max_words must be at least 1.")
 
@@ -47,13 +66,11 @@ def split_into_passages(
     step = max_words - overlap_words
 
     for page in pages:
-        page_text = page.text.strip()
+        page_text = _normalize_pdf_text(page.text)
 
         if not page_text:
             continue
 
-        # Split at sentence-ending punctuation followed by whitespace.
-        # This avoids splitting decimal numbers such as 3.14.
         sentences = re.split(
             r"(?<=[.!?])\s+(?=[^\s])",
             page_text,
@@ -67,7 +84,6 @@ def split_into_passages(
 
             words = sentence.split()
 
-            # Keep ordinary sentences intact.
             if len(words) <= max_words:
                 passages.append(
                     EvidencePassage(
@@ -79,7 +95,6 @@ def split_into_passages(
                 )
                 continue
 
-            # Split unusually long sentences into overlapping windows.
             for start in range(0, len(words), step):
                 chunk = " ".join(words[start : start + max_words]).strip()
 
@@ -106,7 +121,7 @@ def split_into_passages(
 
 
 class TfidfRetriever:
-    """Simple local TF-IDF retriever for evidence passages."""
+    """Hybrid lexical and semantic retriever for PDF evidence."""
 
     def __init__(self) -> None:
         self._vectorizer = TfidfVectorizer(
@@ -118,6 +133,7 @@ class TfidfRetriever:
         )
         self._passages: list[EvidencePassage] = []
         self._matrix = None
+        self._embeddings: np.ndarray | None = None
         self._fitted = False
 
     @property
@@ -125,7 +141,7 @@ class TfidfRetriever:
         return len(self._passages)
 
     def fit(self, pages: list[PDFPage]) -> None:
-        """Index sentence-level passages from uploaded PDF pages."""
+        """Index PDF passages using TF-IDF and semantic embeddings."""
         if not pages:
             raise ValueError(
                 "Cannot index documents without extracted pages."
@@ -148,12 +164,21 @@ class TfidfRetriever:
                 "The supplied documents may contain no searchable terms."
             ) from exc
 
+        model = _get_embedding_model()
+        embeddings = model.encode(
+            texts,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+
         self._passages = passages
         self._matrix = matrix
+        self._embeddings = np.asarray(embeddings, dtype=np.float32)
         self._fitted = True
 
         logger.info(
-            "Indexed %d evidence passages from the uploaded PDFs.",
+            "Indexed %d evidence passages using hybrid retrieval.",
             len(self._passages),
         )
 
@@ -162,8 +187,8 @@ class TfidfRetriever:
         query: str,
         top_k: int = 5,
     ) -> list[EvidencePassage]:
-        """Return the highest-scoring passages for a query."""
-        if not self._fitted or self._matrix is None:
+        """Rank passages using combined lexical and semantic similarity."""
+        if not self._fitted or self._matrix is None or self._embeddings is None:
             raise RuntimeError("Call fit() before retrieve().")
 
         if not query or not query.strip():
@@ -173,15 +198,34 @@ class TfidfRetriever:
             raise ValueError("top_k must be at least 1.")
 
         query_vector = self._vectorizer.transform([query])
-        scores = cosine_similarity(
+        lexical_scores = cosine_similarity(
             query_vector,
             self._matrix,
         ).ravel()
 
+        model = _get_embedding_model()
+        query_embedding = model.encode(
+            [query],
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )[0]
+
+        semantic_scores = self._embeddings @ query_embedding
+
+        # Cosine similarity may be negative; shift semantic scores to [0, 1]
+        # so both components contribute on a comparable scale.
+        semantic_scores = np.clip((semantic_scores + 1.0) / 2.0, 0.0, 1.0)
+
+        combined_scores = (
+            _LEXICAL_WEIGHT * lexical_scores
+            + _SEMANTIC_WEIGHT * semantic_scores
+        )
+
         # Stable ordering: higher score first, then original passage order.
         ranked_indices = sorted(
-            range(len(scores)),
-            key=lambda index: (-float(scores[index]), index),
+            range(len(combined_scores)),
+            key=lambda index: (-float(combined_scores[index]), index),
         )[:top_k]
 
         return [
@@ -189,7 +233,7 @@ class TfidfRetriever:
                 source=self._passages[index].source,
                 page=self._passages[index].page,
                 text=self._passages[index].text,
-                retrieval_score=float(scores[index]),
+                retrieval_score=float(combined_scores[index]),
             )
             for index in ranked_indices
         ]

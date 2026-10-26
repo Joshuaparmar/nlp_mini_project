@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 MAX_EVIDENCE_ITEMS = 3
 
 # Share of the claim's content words that must appear in the passage.
-MIN_ENTITY_CONTENT_COVERAGE = 0.30  # when the claim has a named-entity anchor
+MIN_ENTITY_CONTENT_COVERAGE = 0.20  # when the claim has a named-entity anchor
 MIN_FALLBACK_COVERAGE = 0.50  # when the claim has no named-entity anchor
 
 STOPWORDS = frozenset(

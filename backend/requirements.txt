@@ -13,3 +13,4 @@ accelerate
 safetensors
 pytest
 httpx
+sentence-transformers

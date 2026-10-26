@@ -42,7 +42,7 @@ def extract_pdf_pages(
                 )
 
             for page_number, page in enumerate(document, start=1):
-                text = page.get_text("text", sort=True).strip()
+                text = page.get_text("text", sort=False).strip()
 
                 if text:
                     pages.append(

@@ -1,0 +1,386 @@
+[1mdiff --git a/backend/main.py b/backend/main.py[m
+[1mindex dda524e..ebc45f6 100644[m
+[1m--- a/backend/main.py[m
+[1m+++ b/backend/main.py[m
+[36m@@ -1,3 +1,4 @@[m
+[32m+[m
+ import logging[m
+ import tempfile[m
+ from pathlib import Path[m
+[36m@@ -21,11 +22,12 @@[m [mfrom backend.evidence_selection import ([m
+ from backend.pdf_parser import PDFParseError, extract_pdf_pages[m
+ from backend.reasoning_checker import check_reasoning_consistency[m
+ from backend.retriever import TfidfRetriever[m
+[31m-from backend.schemas import ([m
+[31m-    VerifiedClaim,[m
+[31m-    VerifyResponse,[m
+[31m-)[m
+[32m+[m[32mfrom backend.schemas import VerifiedClaim, VerifyResponse[m
+ from backend.verifier import classify_evidence[m
+[32m+[m[32mfrom backend.knowledge_vault import ([m
+[32m+[m[32m    load_document_pages,[m
+[32m+[m[32m    router as knowledge_vault_router,[m
+[32m+[m[32m)[m
+ [m
+ [m
+ logging.basicConfig(level=logging.INFO)[m
+[36m@@ -34,13 +36,30 @@[m [mlogger = logging.getLogger(__name__)[m
+ app = FastAPI([m
+     title="Second Opinion API",[m
+     description=([m
+[31m-        "Audit claims in AI-generated answers against uploaded PDF sources."[m
+[32m+[m[32m        "Audit claims in AI-generated answers against uploaded PDF sources "[m
+[32m+[m[32m        "and documents saved in the Personal Knowledge Vault."[m
+     ),[m
+     version="0.2.0",[m
+ )[m
+ [m
+[32m+[m[32mapp.include_router(knowledge_vault_router)[m
+[32m+[m
+[32m+[m[32m# Development configuration. Restrict origins before production deployment.[m
+[32m+[m[32mapp.add_middleware([m
+[32m+[m[32m    CORSMiddleware,[m
+[32m+[m[32m    allow_origins=["*"],[m
+[32m+[m[32m    allow_credentials=False,[m
+[32m+[m[32m    allow_methods=["*"],[m
+[32m+[m[32m    allow_headers=["*"],[m
+[32m+[m[32m)[m
+[32m+[m
+[32m+[m[32mTOP_K = 5[m
+[32m+[m[32mMIN_RETRIEVAL_SCORE = 0.05[m
+[32m+[m[32mMAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB per PDF[m
+[32m+[m
+ [m
+ def custom_openapi():[m
+[32m+[m[32m    """Build the OpenAPI schema for the verification and Vault APIs."""[m
+     if app.openapi_schema:[m
+         return app.openapi_schema[m
+ [m
+[36m@@ -51,19 +70,50 @@[m [mdef custom_openapi():[m
+         routes=app.routes,[m
+     )[m
+ [m
+[31m-    body_schema = openapi_schema["components"]["schemas"][[m
+[31m-        "Body_verify_answer_verify_post"[m
+[31m-    ][m
+[31m-[m
+[31m-    body_schema["properties"]["files"] = {[m
+[31m-        "type": "array",[m
+[31m-        "title": "Files",[m
+[31m-        "description": "Upload one or more source PDF files.",[m
+[31m-        "items": {[m
+[31m-            "type": "string",[m
+[31m-            "format": "binary",[m
+[31m-        },[m
+[31m-    }[m
+[32m+[m[32m    schemas = openapi_schema.setdefault("components", {}).setdefault([m
+[32m+[m[32m        "schemas", {}[m
+[32m+[m[32m    )[m
+[32m+[m[32m    body_schema = schemas.get("Body_verify_answer_verify_post")[m
+[32m+[m
+[32m+[m[32m    if body_schema is not None:[m
+[32m+[m[32m        properties = body_schema.setdefault("properties", {})[m
+[32m+[m
+[32m+[m[32m        # Optional array of uploaded PDF files.[m
+[32m+[m[32m        # Keep the binary format for OpenAPI 3.0-compatible tooling.[m
+[32m+[m[32m        properties["files"] = {[m
+[32m+[m[32m            "type": "array",[m
+[32m+[m[32m            "title": "Files",[m
+[32m+[m[32m            "description": ([m
+[32m+[m[32m                "Optional source PDF files. Leave empty when using "[m
+[32m+[m[32m                "saved Knowledge Vault documents."[m
+[32m+[m[32m            ),[m
+[32m+[m[32m            "items": {[m
+[32m+[m[32m                "type": "string",[m
+[32m+[m[32m                "format": "binary",[m
+[32m+[m[32m            },[m
+[32m+[m[32m        }[m
+[32m+[m
+[32m+[m[32m        # Optional IDs of documents already stored in the Vault.[m
+[32m+[m[32m        properties["document_ids"] = {[m
+[32m+[m[32m            "type": "array",[m
+[32m+[m[32m            "title": "Document Ids",[m
+[32m+[m[32m            "description": ([m
+[32m+[m[32m                "Optional IDs of documents saved in the Knowledge Vault. "[m
+[32m+[m[32m                "Submit one ID per value."[m
+[32m+[m[32m            ),[m
+[32m+[m[32m            "items": {[m
+[32m+[m[32m                "type": "string",[m
+[32m+[m[32m            },[m
+[32m+[m[32m        }[m
+[32m+[m
+[32m+[m[32m        # Only answer is required. The endpoint validates that at least[m
+[32m+[m[32m        # one evidence source is supplied.[m
+[32m+[m[32m        required = body_schema.get("required", [])[m
+[32m+[m[32m        body_schema["required"] = [[m
+[32m+[m[32m            field[m
+[32m+[m[32m            for field in required[m
+[32m+[m[32m            if field not in {"files", "document_ids"}[m
+[32m+[m[32m        ][m
+ [m
+     app.openapi_schema = openapi_schema[m
+     return app.openapi_schema[m
+[36m@@ -71,19 +121,6 @@[m [mdef custom_openapi():[m
+ [m
+ app.openapi = custom_openapi[m
+ [m
+[31m-# Development configuration. Restrict origins before production deployment.[m
+[31m-app.add_middleware([m
+[31m-    CORSMiddleware,[m
+[31m-    allow_origins=["*"],[m
+[31m-    allow_credentials=False,[m
+[31m-    allow_methods=["*"],[m
+[31m-    allow_headers=["*"],[m
+[31m-)[m
+[31m-[m
+[31m-TOP_K = 5[m
+[31m-MIN_RETRIEVAL_SCORE = 0.05[m
+[31m-MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB per PDF[m
+[31m-[m
+ [m
+ @app.get("/")[m
+ def root():[m
+[36m@@ -100,12 +137,7 @@[m [mdef health():[m
+ [m
+ [m
+ def _run_audit(answer: str, pages: list) -> VerifyResponse:[m
+[31m-    """[m
+[31m-    CPU-bound audit pipeline (retrieval, NLI, consistency checks).[m
+[31m-[m
+[31m-    Runs in a worker thread so the event loop is not blocked by model[m
+[31m-    inference. `classify_evidence` is looked up at call time.[m
+[31m-    """[m
+[32m+[m[32m    """Run retrieval, evidence verification, and reasoning checks."""[m
+     claims = extract_claims(answer)[m
+ [m
+     if not claims:[m
+[36m@@ -121,7 +153,7 @@[m [mdef _run_audit(answer: str, pages: list) -> VerifyResponse:[m
+     except ValueError as exc:[m
+         raise HTTPException([m
+             status_code=422,[m
+[31m-            detail=f"Could not index the uploaded PDFs: {exc}",[m
+[32m+[m[32m            detail=f"Could not index the evidence documents: {exc}",[m
+         ) from exc[m
+ [m
+     verified_claims: list[VerifiedClaim] = [][m
+[36m@@ -129,6 +161,7 @@[m [mdef _run_audit(answer: str, pages: list) -> VerifyResponse:[m
+     try:[m
+         for claim in claims:[m
+             passages = retriever.retrieve(claim, top_k=TOP_K)[m
+[32m+[m
+             verified_claims.append([m
+                 build_verified_claim([m
+                     claim,[m
+[36m@@ -140,18 +173,16 @@[m [mdef _run_audit(answer: str, pages: list) -> VerifyResponse:[m
+                 )[m
+             )[m
+     except VerificationModelError as exc:[m
+[32m+[m[32m        logger.exception("Evidence verification model failed.")[m
+         raise HTTPException([m
+             status_code=500,[m
+             detail="The evidence verification model failed.",[m
+         ) from exc[m
+ [m
+[31m-    # Look for possible direct contradictions between extracted claims.[m
+     reasoning_issues = check_reasoning_consistency([m
+         [item.claim for item in verified_claims][m
+     )[m
+ [m
+[31m-    # Attach each detected issue to the claims involved so the frontend can[m
+[31m-    # display both claim-level flags and a global audit list.[m
+     for issue in reasoning_issues:[m
+         for item in verified_claims:[m
+             if item.claim in issue.related_claims:[m
+[36m@@ -171,87 +202,149 @@[m [mdef _run_audit(answer: str, pages: list) -> VerifyResponse:[m
+     )[m
+ [m
+ [m
+[32m+[m[32mdef _remove_temp_file(path: Path) -> None:[m
+[32m+[m[32m    """Remove a temporary PDF without masking the original error."""[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        path.unlink(missing_ok=True)[m
+[32m+[m[32m    except OSError:[m
+[32m+[m[32m        logger.warning([m
+[32m+[m[32m            "Could not remove temporary PDF file: %s",[m
+[32m+[m[32m            path,[m
+[32m+[m[32m            exc_info=True,[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m
+ @app.post("/verify", response_model=VerifyResponse)[m
+ async def verify_answer([m
+     answer: str = Form(..., min_length=1),[m
+[31m-    files: list[UploadFile] = File([m
+[31m-        ...,[m
+[31m-        description="Upload one or more source PDF files.",[m
+[31m-        media_type="application/pdf",[m
+[32m+[m[32m    files: list[UploadFile] | None = File([m
+[32m+[m[32m        default=None,[m
+[32m+[m[32m        description="Optional source PDF files to use as evidence.",[m
+[32m+[m[32m    ),[m
+[32m+[m[32m    document_ids: list[str] | None = Form([m
+[32m+[m[32m        default=None,[m
+[32m+[m[32m        description=([m
+[32m+[m[32m            "Optional IDs of documents already stored in the Knowledge Vault. "[m
+[32m+[m[32m            "Submit one ID per value."[m
+[32m+[m[32m        ),[m
+     ),[m
+ ):[m
+[31m-    """Verify extracted claims against uploaded PDF evidence."""[m
+[31m-[m
+[32m+[m[32m    """Verify claims against uploaded PDFs, saved Vault documents, or both."""[m
+     if not answer.strip():[m
+         raise HTTPException([m
+             status_code=400,[m
+             detail="Answer must not be empty.",[m
+         )[m
+ [m
+[31m-    if not files:[m
+[32m+[m[32m    uploaded_files = files or [][m
+[32m+[m
+[32m+[m[32m    selected_document_ids = list([m
+[32m+[m[32m        dict.fromkeys([m
+[32m+[m[32m            document_id.strip()[m
+[32m+[m[32m            for document_id in (document_ids or [])[m
+[32m+[m[32m            if document_id and document_id.strip()[m
+[32m+[m[32m        )[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if not uploaded_files and not selected_document_ids:[m
+         raise HTTPException([m
+             status_code=400,[m
+[31m-            detail="Upload at least one source PDF.",[m
+[32m+[m[32m            detail=([m
+[32m+[m[32m                "Provide at least one source PDF or one saved Vault "[m
+[32m+[m[32m                "document ID."[m
+[32m+[m[32m            ),[m
+         )[m
+ [m
+     pages = [][m
+ [m
+[31m-    for uploaded_file in files:[m
+[31m-        filename = Path(uploaded_file.filename or "source.pdf").name[m
+[32m+[m[32m    if selected_document_ids:[m
+[32m+[m[32m        saved_pages = await run_in_threadpool([m
+[32m+[m[32m            load_document_pages,[m
+[32m+[m[32m            selected_document_ids,[m
+[32m+[m[32m        )[m
+[32m+[m[32m        pages.extend(saved_pages)[m
+ [m
+[31m-        if not filename.lower().endswith(".pdf"):[m
+[31m-            raise HTTPException([m
+[31m-                status_code=400,[m
+[31m-                detail=f"'{filename}' is not a PDF file.",[m
+[31m-            )[m
+[32m+[m[32m    for uploaded_file in uploaded_files:[m
+[32m+[m[32m        filename = Path([m
+[32m+[m[32m            uploaded_file.filename or "source.pdf"[m
+[32m+[m[32m        ).name[m
+[32m+[m[32m        temp_path = None[m
+ [m
+[31m-        # Read at most one byte past the limit so an oversized upload is[m
+[31m-        # rejected without loading all of it into memory.[m
+[31m-        content = await uploaded_file.read(MAX_FILE_SIZE + 1)[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            if not filename.lower().endswith(".pdf"):[m
+[32m+[m[32m                raise HTTPException([m
+[32m+[m[32m                    status_code=400,[m
+[32m+[m[32m                    detail=f"'{filename}' is not a PDF file.",[m
+[32m+[m[32m                )[m
+ [m
+[31m-        if not content:[m
+[31m-            raise HTTPException([m
+[31m-                status_code=400,[m
+[31m-                detail=f"'{filename}' is empty.",[m
+[31m-            )[m
+[32m+[m[32m            content = await uploaded_file.read(MAX_FILE_SIZE + 1)[m
+ [m
+[31m-        if len(content) > MAX_FILE_SIZE:[m
+[31m-            raise HTTPException([m
+[31m-                status_code=413,[m
+[31m-                detail=f"'{filename}' exceeds the 20 MB file limit.",[m
+[31m-            )[m
+[32m+[m[32m            if not content:[m
+[32m+[m[32m                raise HTTPException([m
+[32m+[m[32m                    status_code=400,[m
+[32m+[m[32m                    detail=f"'{filename}' is empty.",[m
+[32m+[m[32m                )[m
+ [m
+[31m-        temp_path = None[m
+[32m+[m[32m            if len(content) > MAX_FILE_SIZE:[m
+[32m+[m[32m                raise HTTPException([m
+[32m+[m[32m                    status_code=413,[m
+[32m+[m[32m                    detail=f"'{filename}' exceeds the 20 MB file limit.",[m
+[32m+[m[32m                )[m
+[32m+[m
+[32m+[m[32m            if b"%PDF-" not in content[:1024]:[m
+[32m+[m[32m                raise HTTPException([m
+[32m+[m[32m                    status_code=422,[m
+[32m+[m[32m                    detail=f"'{filename}' is not a valid PDF file.",[m
+[32m+[m[32m                )[m
+ [m
+[31m-        try:[m
+             with tempfile.NamedTemporaryFile([m
+[32m+[m[32m                mode="wb",[m
+                 suffix=".pdf",[m
+[32m+[m[32m                prefix="second_opinion_",[m
+                 delete=False,[m
+             ) as temp_file:[m
+                 temp_file.write(content)[m
+                 temp_path = Path(temp_file.name)[m
+ [m
+[31m-            pages.extend([m
+[31m-                extract_pdf_pages([m
+[32m+[m[32m            try:[m
+[32m+[m[32m                extracted_pages = await run_in_threadpool([m
+[32m+[m[32m                    extract_pdf_pages,[m
+                     temp_path,[m
+[31m-                    source_name=filename,[m
+[32m+[m[32m                    filename,[m
+                 )[m
+[31m-            )[m
+[32m+[m[32m            except PDFParseError as exc:[m
+[32m+[m[32m                logger.info([m
+[32m+[m[32m                    "Could not parse uploaded PDF '%s': %s",[m
+[32m+[m[32m                    filename,[m
+[32m+[m[32m                    exc,[m
+[32m+[m[32m                )[m
+[32m+[m[32m                raise HTTPException([m
+[32m+[m[32m                    status_code=422,[m
+[32m+[m[32m                    detail=([m
+[32m+[m[32m                        f"Could not read '{filename}'. "[m
+[32m+[m[32m                        "Ensure it is a valid, readable PDF."[m
+[32m+[m[32m                    ),[m
+[32m+[m[32m                ) from exc[m
+ [m
+[31m-        except PDFParseError as exc:[m
+[31m-            raise HTTPException([m
+[31m-                status_code=422,[m
+[31m-                detail=str(exc),[m
+[31m-            ) from exc[m
+[32m+[m[32m            pages.extend(extracted_pages)[m
+ [m
+         finally:[m
+             if temp_path is not None:[m
+[31m-                temp_path.unlink(missing_ok=True)[m
+[32m+[m[32m                _remove_temp_file(temp_path)[m
+[32m+[m
+[32m+[m[32m            await uploaded_file.close()[m
+ [m
+     if not pages:[m
+         raise HTTPException([m
+             status_code=422,[m
+[31m-            detail="No readable text was extracted from the PDFs.",[m
+[32m+[m[32m            detail=([m
+[32m+[m[32m                "No readable text was extracted from the provided "[m
+[32m+[m[32m                "evidence documents."[m
+[32m+[m[32m            ),[m
+         )[m
+ [m
+[31m-    return await run_in_threadpool(_run_audit, answer, pages)[m
+\ No newline at end of file[m
+[32m+[m[32m    return await run_in_threadpool([m
+[32m+[m[32m        _run_audit,[m
+[32m+[m[32m        answer,[m
+[32m+[m[32m        pages,[m
+[32m+[m[32m    )[m

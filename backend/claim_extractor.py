@@ -84,21 +84,18 @@ def extract_claims(answer: str) -> list[str]:
         if not line:
             continue
 
-        # Remove Markdown heading markers.
         line = re.sub(r"^#{1,6}\s+", "", line).strip()
 
-        # Ignore standalone introductory labels such as "Facts:".
         if line.rstrip(":").strip().casefold() in INTRODUCTORY_LABELS:
             continue
 
-        # Remove numbered-list and bullet prefixes.
         line = re.sub(r"^(?:[-*+]\s+|\d+[.)]\s+)", "", line).strip()
 
         if not line:
             continue
 
         for candidate in _split_sentences(line):
-            claim = candidate.strip().strip('"“”\'‘’ ')
+            claim = candidate.strip().strip()
 
             if not claim or not re.search(r"[A-Za-z0-9]", claim):
                 continue
